@@ -1,0 +1,480 @@
+// =============================================================================
+// ClickUp-style Project Management Backend: Prisma schema (PostgreSQL)
+// Hierarchy: Workspace > Space > Folder (optional) > List > Task > Subtask
+//
+// Conventions
+//  - IDs: UUID v7 (time-ordered, index friendly). Use uuid() if your Prisma
+//    version does not support uuid(7).
+//  - Tables are snake_case plural; columns are snake_case via @map.
+//  - Timestamps are timestamptz(3).
+//  - Every tenant-owned row carries workspace_id so isolation is a simple
+//    `where workspace_id = ?` (the service layer must keep it in sync with
+//    the parent row).
+//  - Soft delete: deleted_at (Task, Comment). Archive: archived_at
+//    (Space, Folder, List). Add partial indexes for these in a raw SQL
+//    migration (see the notes at the bottom).
+//  - Ordering: `position` is a fractional-index string for Space/Folder/
+//    List/Task; Status uses an Int.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+
+  @@map("workspace_role")
+}
+
+enum StatusType {
+  OPEN
+  ACTIVE
+  DONE
+
+  @@map("status_type")
+}
+
+enum TaskPriority {
+  NONE
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+
+  @@map("task_priority")
+}
+
+enum ActivityEntityType {
+  WORKSPACE
+  MEMBER
+  SPACE
+  FOLDER
+  LIST
+  STATUS
+  TASK
+  COMMENT
+
+  @@map("activity_entity_type")
+}
+
+enum ActivityAction {
+  CREATED
+  UPDATED
+  DELETED
+  RESTORED
+  ARCHIVED
+  UNARCHIVED
+  MOVED
+  STATUS_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  TAGGED
+  UNTAGGED
+  COMMENTED
+
+  @@map("activity_action")
+}
+
+// -----------------------------------------------------------------------------
+// Identity
+// -----------------------------------------------------------------------------
+
+model User {
+  id              String    @id @default(uuid(7)) @db.Uuid
+  email           String    @unique // store lowercased (normalize in the service)
+  passwordHash    String    @map("password_hash")
+  name            String
+  avatarUrl       String?   @map("avatar_url")
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(3)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  refreshTokens            RefreshToken[]
+  passwordResetTokens      PasswordResetToken[]
+  emailVerificationTokens  EmailVerificationToken[]
+  memberships              WorkspaceMember[]
+  sentInvites              WorkspaceInvite[]
+  createdTasks             Task[]                   @relation("TaskCreator")
+  taskAssignments          TaskAssignee[]
+  comments                 Comment[]
+  commentMentions          CommentMention[]
+  activities               ActivityLog[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("users")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  familyId     String    @map("family_id") @db.Uuid // one family per login session, for reuse detection
+  tokenHash    String    @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)  
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedById String?   @unique @map("replaced_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  replacedBy   RefreshToken? @relation("RefreshTokenRotation", fields: [replacedById], references: [id], onDelete: SetNull)
+  replacedFrom RefreshToken? @relation("RefreshTokenRotation")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([familyId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid(7)) @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt    DateTime? @map("used_at") @db.Timestamptz(3)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+// -----------------------------------------------------------------------------
+// Tenancy
+// -----------------------------------------------------------------------------
+
+model Workspace {
+  id        String   @id @default(uuid(7)) @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  members      WorkspaceMember[]
+  invites      WorkspaceInvite[]
+  spaces       Space[]
+  folders      Folder[]
+  lists        List[]
+  statuses     Status[]
+  tasks        Task[]
+  tags         Tag[]
+  comments     Comment[]
+  activityLogs ActivityLog[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+  @@index([workspaceId, role])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("workspace_members")
+}
+
+model WorkspaceInvite {
+  id          String        @id @default(uuid(7)) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  email       String
+  role        WorkspaceRole @default(MEMBER)
+  tokenHash   String        @unique @map("token_hash")
+  invitedById String?       @map("invited_by_id") @db.Uuid
+  expiresAt   DateTime      @map("expires_at") @db.Timestamptz(3)
+  acceptedAt  DateTime?     @map("accepted_at") @db.Timestamptz(3)
+  createdAt   DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedBy User?     @relation(fields: [invitedById], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([email])
+  @@index([expiresAt])
+  @@map("workspace_invites")
+}
+
+// -----------------------------------------------------------------------------
+// Hierarchy: Space > Folder (optional) > List > Status
+// -----------------------------------------------------------------------------
+
+model Space {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  name        String
+  description String?
+  color       String?
+  icon        String?
+  position    String
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folders   Folder[]
+  lists     List[]
+
+  @@index([workspaceId, position])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("spaces")
+}
+
+model Folder {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  spaceId     String    @map("space_id") @db.Uuid
+  name        String
+  color       String?
+  position    String
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  space     Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  lists     List[]
+
+  @@index([spaceId, position])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("folders")
+}
+
+model List {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  spaceId     String    @map("space_id") @db.Uuid
+  folderId    String?   @map("folder_id") @db.Uuid // null = list sits directly in the space
+  name        String
+  description String?
+  color       String?
+  position    String
+  archivedAt  DateTime? @map("archived_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  space     Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  folder    Folder?   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  statuses  Status[]
+  tasks     Task[]
+
+  @@index([spaceId, folderId, position])
+  @@index([folderId, position])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("lists")
+}
+
+model Status {
+  id          String     @id @default(uuid(7)) @db.Uuid
+  workspaceId String     @map("workspace_id") @db.Uuid
+  listId      String     @map("list_id") @db.Uuid
+  name        String
+  color       String?
+  type        StatusType @default(ACTIVE)
+  position    Int
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  list      List      @relation(fields: [listId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@unique([listId, name])
+  @@index([listId, position])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("statuses")
+}
+
+// -----------------------------------------------------------------------------
+// Work: Task, assignees, tags
+// -----------------------------------------------------------------------------
+
+model Task {
+  id          String       @id @default(uuid(7)) @db.Uuid
+  workspaceId String       @map("workspace_id") @db.Uuid
+  listId      String       @map("list_id") @db.Uuid
+  statusId    String       @map("status_id") @db.Uuid
+  parentId    String?      @map("parent_id") @db.Uuid // subtask parent (cap depth in the service)
+  creatorId   String?      @map("creator_id") @db.Uuid
+  title       String
+  description String?      @db.Text
+  priority    TaskPriority @default(NONE)
+  startDate   DateTime?    @map("start_date") @db.Timestamptz(3)
+  dueDate     DateTime?    @map("due_date") @db.Timestamptz(3)
+  completedAt DateTime?    @map("completed_at") @db.Timestamptz(3)
+  position    String
+  deletedAt   DateTime?    @map("deleted_at") @db.Timestamptz(3)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace    Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  list         List           @relation(fields: [listId], references: [id], onDelete: Cascade)
+  status       Status         @relation(fields: [statusId], references: [id], onDelete: Restrict)
+  parent       Task?          @relation("TaskSubtasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subtasks     Task[]         @relation("TaskSubtasks")
+  creator      User?          @relation("TaskCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+  assignees    TaskAssignee[]
+  tags         TaskTag[]
+  comments     Comment[]
+  activityLogs ActivityLog[]
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([listId, statusId, position])
+  @@index([listId, createdAt(sort: Desc)])
+  @@index([workspaceId, dueDate])
+  @@index([parentId])
+  @@index([creatorId])
+  @@index([statusId])
+  @@map("tasks")
+}
+
+model TaskAssignee {
+  taskId     String   @map("task_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  assignedAt DateTime @default(now()) @map("assigned_at") @db.Timestamptz(3)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, userId])
+  @@index([userId, assignedAt(sort: Desc)]) // powers the "my tasks" query
+  @@map("task_assignees")
+}
+
+model Tag {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String
+  color       String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  tasks     TaskTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@map("tags")
+}
+
+model TaskTag {
+  taskId    String   @map("task_id") @db.Uuid
+  tagId     String   @map("tag_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([tagId])
+  @@map("task_tags")
+}
+
+// -----------------------------------------------------------------------------
+// Collaboration
+// -----------------------------------------------------------------------------
+
+model Comment {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  workspaceId String    @map("workspace_id") @db.Uuid
+  taskId      String    @map("task_id") @db.Uuid
+  authorId    String?   @map("author_id") @db.Uuid
+  body        String    @db.Text
+  editedAt    DateTime? @map("edited_at") @db.Timestamptz(3)
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  workspace Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  task      Task             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  author    User?            @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  mentions  CommentMention[]
+
+  @@index([taskId, createdAt(sort: Desc)])
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([authorId])
+  @@map("comments")
+}
+
+model CommentMention {
+  commentId String   @map("comment_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  comment Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([commentId, userId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("comment_mentions")
+}
+
+// Append-only audit trail. Never updated, so there is no updated_at.
+model ActivityLog {
+  id          String             @id @default(uuid(7)) @db.Uuid
+  workspaceId String             @map("workspace_id") @db.Uuid
+  taskId      String?            @map("task_id") @db.Uuid
+  actorId     String?            @map("actor_id") @db.Uuid
+  entityType  ActivityEntityType @map("entity_type")
+  entityId    String             @map("entity_id") @db.Uuid
+  action      ActivityAction
+  metadata    Json?              @db.JsonB // e.g. { "field": "status", "from": "...", "to": "..." }
+  createdAt   DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  actor     User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt(sort: Desc)])
+  @@index([taskId, createdAt(sort: Desc)])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("activity_logs")
+}
+
+// =============================================================================
+// Raw SQL to add in a migration (Prisma cannot express these):
+//  1. Partial indexes for live rows, e.g.
+//       CREATE INDEX tasks_live_list_idx ON tasks (list_id, position) WHERE deleted_at IS NULL;
+//       CREATE INDEX lists_live_space_idx ON lists (space_id, position) WHERE archived_at IS NULL;
+//  2. Exactly one OWNER per workspace:
+//       CREATE UNIQUE INDEX workspace_one_owner_idx ON workspace_members (workspace_id) WHERE role = 'OWNER';
+//  3. Full-text search on tasks (title + description) with a GIN tsvector index.
+// =============================================================================

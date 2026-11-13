@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.git
+.gitignore
+.prettierrc
+*.log
+npm-debug.log*
+.temp
+.tmp
