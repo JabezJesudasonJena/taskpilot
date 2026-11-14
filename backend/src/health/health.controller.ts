@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { HealthCheck, HealthCheckService } from '@nestjs/terminus';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service.js';
+import { Public } from '../common/index.js';
 
 @ApiTags('Health')
 @Controller('health')
@@ -11,6 +12,7 @@ export class HealthController {
     private readonly prisma: PrismaService,
   ) {}
 
+  @Public()
   @Get()
   @HealthCheck()
   @ApiOperation({ summary: 'Health check endpoint' })
