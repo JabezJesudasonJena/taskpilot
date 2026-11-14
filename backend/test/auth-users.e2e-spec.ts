@@ -4,7 +4,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { PrismaClient } from '@prisma/client';
 import { AppModule } from '../src/app.module.js';
-import { MailService } from '../src/modules/auth/mail/mail.service.js';
+import { MailService } from '../src/modules/mail/index.js';
 import { setupTestDatabase } from '../scripts/setup-test-db.js';
 
 describe('Auth & Users Module (e2e)', () => {
@@ -313,6 +313,16 @@ describe('Auth & Users Module (e2e)', () => {
     const accessToken = regRes.body.accessToken;
     const oldRefreshToken = regRes.body.refreshToken;
 
+    // Login a second time to create a second session/family
+    const login2Res = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({
+        email: 'changepass@example.com',
+        password: 'initialPassword123',
+      })
+      .expect(200);
+    const session2RefreshToken = login2Res.body.refreshToken;
+
     // Change password
     await request(app.getHttpServer())
       .post('/api/v1/users/me/change-password')
@@ -341,10 +351,15 @@ describe('Auth & Users Module (e2e)', () => {
       })
       .expect(200);
 
-    // Old refresh token is revoked
+    // ALL of that user's refresh tokens across families are dead
     await request(app.getHttpServer())
       .post('/api/v1/auth/refresh')
       .send({ refreshToken: oldRefreshToken })
+      .expect(401);
+
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/refresh')
+      .send({ refreshToken: session2RefreshToken })
       .expect(401);
   });
 
@@ -408,5 +423,96 @@ describe('Auth & Users Module (e2e)', () => {
     expect(Array.isArray(invalidRes.body.details)).toBe(true);
     expect(invalidRes.body.path).toBe('/api/v1/auth/register');
     expect(invalidRes.body.timestamp).toBeDefined();
+  });
+
+  it('scenario 12: verify-email and resend-verification', async () => {
+    let capturedVerifyToken = '';
+    vi.spyOn(mailService, 'sendVerificationEmail').mockImplementation(
+      async (_email: string, token: string) => {
+        capturedVerifyToken = token;
+      },
+    );
+
+    // Register user
+    const regRes = await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({
+        email: 'verifytest@example.com',
+        password: 'password123',
+        name: 'Verify Test User',
+      })
+      .expect(201);
+
+    expect(capturedVerifyToken).toBeTruthy();
+    const tokenToVerify = capturedVerifyToken;
+    const accessToken = regRes.body.accessToken;
+
+    // Check before verification: emailVerifiedAt is null
+    const meBefore = await request(app.getHttpServer())
+      .get('/api/v1/users/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(meBefore.body.emailVerifiedAt).toBeNull();
+
+    // Verify email with invalid token -> 400
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/verify-email')
+      .send({ token: 'invalid_dummy_token' })
+      .expect(400);
+
+    // Verify email with valid token -> 204
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/verify-email')
+      .send({ token: tokenToVerify })
+      .expect(204);
+
+    // Verify email a second time -> 400 (single-use)
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/verify-email')
+      .send({ token: tokenToVerify })
+      .expect(400);
+
+    // Check after verification: emailVerifiedAt is set
+    const meAfter = await request(app.getHttpServer())
+      .get('/api/v1/users/me')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+    expect(meAfter.body.emailVerifiedAt).toBeTruthy();
+
+    // Resend verification when already verified -> 202
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/resend-verification')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(202);
+
+    // Unverified user resend verification test
+    const unverifiedReg = await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({
+        email: 'resendtest@example.com',
+        password: 'password123',
+        name: 'Resend Test User',
+      })
+      .expect(201);
+
+    capturedVerifyToken = '';
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/resend-verification')
+      .set('Authorization', `Bearer ${unverifiedReg.body.accessToken}`)
+      .expect(202);
+
+    expect(capturedVerifyToken).toBeTruthy();
+  });
+
+  it('scenario 13: GET /api/v1/health is reachable without token, other routes protected', async () => {
+    // Health is public
+    await request(app.getHttpServer())
+      .get('/api/v1/health')
+      .expect(200);
+
+    // Protected route without token returns 401
+    await request(app.getHttpServer())
+      .get('/api/v1/users/me')
+      .expect(401);
   });
 });

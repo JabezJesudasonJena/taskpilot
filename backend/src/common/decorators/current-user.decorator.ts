@@ -1,4 +1,10 @@
-import { createParamDecorator, ExecutionContext } from '@nestjs/common';
+import { createParamDecorator, type ExecutionContext } from '@nestjs/common';
+
+export interface CurrentUserData {
+  id: string;
+  email: string;
+  [key: string]: any;
+}
 
 export const CurrentUser = createParamDecorator(
   (data: string | undefined, ctx: ExecutionContext) => {

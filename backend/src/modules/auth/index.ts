@@ -9,4 +9,3 @@ export * from './dto/reset-password.dto.js';
 export * from './dto/verify-email.dto.js';
 export * from './dto/auth-response.dto.js';
 export * from './dto/refresh-response.dto.js';
-export * from './mail/mail.service.js';

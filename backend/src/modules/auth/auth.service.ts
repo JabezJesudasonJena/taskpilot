@@ -12,7 +12,7 @@ import * as argon2 from 'argon2';
 import ms from 'ms';
 import { AuthRepository } from './auth.repository.js';
 import { UsersService } from '../users/index.js';
-import { MailService } from './mail/mail.service.js';
+import { MailService } from '../mail/index.js';
 import { UserResponseDto } from '../../common/index.js';
 import { RegisterDto } from './dto/register.dto.js';
 import { LoginDto } from './dto/login.dto.js';

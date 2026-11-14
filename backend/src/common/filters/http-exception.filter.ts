@@ -57,6 +57,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? `Unique constraint failed on: ${targetStr}`
           : 'Resource already exists';
         details = exception.meta;
+      } else if (exception.code === 'P2003') {
+        statusCode = HttpStatus.CONFLICT;
+        error = 'Conflict';
+        const fieldName =
+          (exception.meta?.field_name as string) ||
+          (exception.meta?.target as string);
+        message = fieldName
+          ? `Foreign key constraint failed on: ${fieldName}`
+          : 'Foreign key constraint violation';
+        details = exception.meta;
       } else if (exception.code === 'P2025') {
         statusCode = HttpStatus.NOT_FOUND;
         error = 'Not Found';

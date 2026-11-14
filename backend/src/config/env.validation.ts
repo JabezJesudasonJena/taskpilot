@@ -11,4 +11,5 @@ export const envValidationSchema = Joi.object({
   JWT_ACCESS_TTL: Joi.string().required(),
   JWT_REFRESH_TTL: Joi.string().required(),
   CORS_ORIGIN: Joi.string().default('*'),
+  APP_URL: Joi.string().uri().default('http://localhost:3001'),
 });

@@ -10,7 +10,7 @@ import type { AuthRepository } from './auth.repository.js';
 import type { UsersService } from '../users/index.js';
 import type { JwtService } from '@nestjs/jwt';
 import type { ConfigService } from '@nestjs/config';
-import type { MailService } from './mail/mail.service.js';
+import type { MailService } from '../mail/index.js';
 import type { User, RefreshToken, PasswordResetToken, EmailVerificationToken } from '@prisma/client';
 
 describe('AuthService (Unit)', () => {
