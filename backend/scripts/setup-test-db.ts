@@ -1,11 +1,15 @@
 import { execSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
+import { assertTestDatabase } from '../test/support/database-guard.js';
 
 export async function setupTestDatabase(): Promise<void> {
   const adminUrl =
     'postgresql://postgres:postgres@localhost:5432/postgres?schema=public';
   const testDbUrl =
+    process.env.DATABASE_URL ||
     'postgresql://postgres:postgres@localhost:5432/proj_manager_test?schema=public';
+
+  assertTestDatabase(testDbUrl);
 
   const adminClient = new PrismaClient({
     datasources: { db: { url: adminUrl } },

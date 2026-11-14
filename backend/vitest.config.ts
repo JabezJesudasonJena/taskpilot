@@ -12,6 +12,7 @@ export default defineConfig({
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    setupFiles: ['./test/support/setup-guard.ts'],
     hookTimeout: 30000,
     testTimeout: 30000,
   },

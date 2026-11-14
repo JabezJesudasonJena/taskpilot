@@ -20,7 +20,6 @@ import { UpdateListDto } from '../dto/lists/update-list.dto.js';
 import { MoveListDto } from '../dto/lists/move-list.dto.js';
 import { ReorderDto } from '../dto/common/reorder.dto.js';
 import { ListQueryDto } from '../dto/lists/list-query.dto.js';
-import { IncludeArchivedQueryDto } from '../dto/common/include-archived-query.dto.js';
 
 @ApiTags('lists')
 @ApiBearerAuth()
@@ -55,24 +54,6 @@ export class ListsController {
     @Query() query: ListQueryDto,
   ) {
     return this.listsService.findBySpace(workspaceId, spaceId, query);
-  }
-
-  @Get('folders/:folderId/lists')
-  @WorkspaceRoles(WorkspaceRole.GUEST)
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'List all lists in folder (minRole: GUEST)',
-  })
-  async findByFolder(
-    @Param('workspaceId', ParseUUIDPipe) workspaceId: string,
-    @Param('folderId', ParseUUIDPipe) folderId: string,
-    @Query() query: IncludeArchivedQueryDto,
-  ) {
-    return this.listsService.findByFolder(
-      workspaceId,
-      folderId,
-      query.includeArchived,
-    );
   }
 
   @Get('lists/:listId')

@@ -144,6 +144,25 @@ export class WorkspacesRepository {
     });
   }
 
+  async findMembersByUserIds(
+    workspaceId: string,
+    userIds: string[],
+  ): Promise<Pick<WorkspaceMember, 'userId' | 'role'>[]> {
+    if (userIds.length === 0) {
+      return [];
+    }
+    return this.prisma.workspaceMember.findMany({
+      where: {
+        workspaceId,
+        userId: { in: userIds },
+      },
+      select: {
+        userId: true,
+        role: true,
+      },
+    });
+  }
+
   async listWorkspacesForUser(
     userId: string,
     limit: number,

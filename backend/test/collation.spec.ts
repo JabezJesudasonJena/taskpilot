@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { PrismaClient } from '@prisma/client';
 import { setupTestDatabase } from '../scripts/setup-test-db.js';
+import { assertTestDatabase } from './support/database-guard.js';
 
 describe('Step 1: Position Collation "C" in PostgreSQL (Integration)', () => {
   let prisma: PrismaClient;
@@ -8,6 +9,7 @@ describe('Step 1: Position Collation "C" in PostgreSQL (Integration)', () => {
     'postgresql://postgres:postgres@localhost:5432/proj_manager_test?schema=public';
 
   beforeAll(async () => {
+    assertTestDatabase(testDbUrl);
     process.env.DATABASE_URL = testDbUrl;
     await setupTestDatabase();
     prisma = new PrismaClient({

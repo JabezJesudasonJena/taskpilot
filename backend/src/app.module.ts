@@ -12,6 +12,7 @@ import {
   WorkspaceAccessGuard,
 } from './modules/workspaces/index.js';
 import { HierarchyModule } from './modules/hierarchy/index.js';
+import { TasksModule } from './modules/tasks/index.js';
 import { JwtAuthGuard, HttpExceptionFilter } from './common/index.js';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
@@ -27,6 +28,7 @@ import { AppService } from './app.service.js';
     MailModule,
     WorkspacesModule,
     HierarchyModule,
+    TasksModule,
   ],
   controllers: [AppController],
   providers: [

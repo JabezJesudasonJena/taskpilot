@@ -259,6 +259,13 @@ export class WorkspacesService {
     };
   }
 
+  async getMembershipsByUserIds(
+    workspaceId: string,
+    userIds: string[],
+  ): Promise<Pick<WorkspaceMember, 'userId' | 'role'>[]> {
+    return this.workspacesRepository.findMembersByUserIds(workspaceId, userIds);
+  }
+
   async changeMemberRole(
     workspaceId: string,
     targetUserId: string,
